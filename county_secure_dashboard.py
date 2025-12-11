@@ -3343,7 +3343,7 @@ def create_dashboard_layout(county_fips, county_info, structured_data):
                     html.H3("Instructions", className="text-lg font-semibold mb-4"),
                     html.Ul([
                         html.Li("Click on radar chart points to see detailed metrics"),
-                        html.Li("People (Purple), Productivity (Yellow), Place (Green)"),
+                        html.Li("People (Purple), Prosperity (Yellow), Place (Green)"),
                         html.Li("Switch between National and State comparisons"),
                         html.Li("Hover for detailed information")
                     ], className="text-sm text-gray-600 space-y-1 list-disc list-inside")
@@ -3509,12 +3509,12 @@ def update_summary_stats(county_data, comparison_mode):
     
     category_colors = {
         'People': '#5760a6',
-        'Productivity': '#c0b265',
+        'Prosperity': '#c0b265',
         'Place': '#588f57'
     }
     
     stats_items = []
-    for category in ['People', 'Productivity', 'Place']:
+    for category in ['People', 'Prosperity', 'Place']:
         if category in county_data and county_data[category]:
             subcats = county_data[category]
             avg_score = round(sum(subcats.values()) / len(subcats), 1)
