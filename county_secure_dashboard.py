@@ -3278,30 +3278,26 @@ def create_dashboard_layout(county_fips, county_info, structured_data):
     """Create the main dashboard layout for authenticated users"""
     county_name = f"{county_info.iloc[0]['county_name']}, {county_info.iloc[0]['state_code']}"
     
+    # Get population
+    population = None
+    if ENHANCED_V2_AVAILABLE and provider:
+        population = provider.get_county_population(county_fips)
+    
     # Create initial radar chart
     initial_radar_fig = create_enhanced_radar_chart(structured_data, county_name, provider, county_fips)
     
     return html.Div([
-        # Header
+        # Header - UPDATED
         html.Div([
-            html.H1(f"{county_name} Sustainability Dashboard", 
-                    className="text-3xl font-bold text-center text-gray-800 mb-2"),
-            
             html.Div([
-                html.Span(
-                    f"✅ Stage {provider.stage}/3 Data Available" if ENHANCED_V2_AVAILABLE and provider else "❌ No Enhanced Data",
-                    className=f"text-sm px-3 py-1 rounded-full text-white " + 
-                             ("bg-green-600" if ENHANCED_V2_AVAILABLE and provider and provider.stage >= 2 else "bg-red-600")
-                ),
-                html.Span(
-                    f"• {provider.comparison_mode.title()} Comparison" if ENHANCED_V2_AVAILABLE and provider else "",
-                    className="text-xs text-gray-600 ml-2"
-                ),
-                html.Span(
-                    f"🔒 Secure Access • County: {county_fips}",
-                    className="text-xs text-green-600 ml-4 font-medium"
-                )
-            ], className="text-center mb-4")
+                html.H1(f"{county_name} Sustainability Dashboard", 
+                        className="text-3xl font-bold text-gray-800"),
+                html.Div([
+                    html.Span("Population: ", className="text-lg text-gray-600 font-medium"),
+                    html.Span(f"{population:,}" if population else "N/A", 
+                             className="text-lg text-gray-800 font-bold")
+                ], className="mt-2") if population else html.Div()
+            ], className="text-center")
         ], className="bg-white p-6 rounded-lg shadow-md mb-6"),
         
         # Main content
@@ -3367,7 +3363,8 @@ def create_dashboard_layout(county_fips, county_info, structured_data):
             'fips': county_fips
         }),
         dcc.Store(id='comparison-mode-store', data='national'),
-        dcc.Store(id='authentication-store', data={'authenticated': True, 'county_fips': county_fips})
+        dcc.Store(id='authentication-store', data={'authenticated': True, 'county_fips': county_fips}),
+        dcc.Store(id='population-store', data=population)
         
     ], className="min-h-screen bg-gray-100 p-6 max-w-7xl mx-auto")
 
