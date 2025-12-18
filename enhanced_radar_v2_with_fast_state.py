@@ -1,6 +1,7 @@
 """
 Enhanced Radar Chart Data Provider for BigQuery
 Supports national and state-level comparisons with fast state percentiles
+FIXED: Drill-down detail charts now working correctly
 """
 import pandas as pd
 from google.cloud import bigquery
@@ -82,6 +83,27 @@ class BigQueryRadarChartDataProvider:
             self.comparison_mode = 'national'
             self.current_state = None
             print("✅ Switched to national-level comparison")
+    
+    def get_county_population(self, county_fips):
+        """Get population for a county"""
+        client = bigquery.Client(project=self.project_id)
+        
+        query = f"""
+            SELECT raw_value as population
+            FROM `{self.project_id}.{self.dataset_id}.raw_metrics`
+            WHERE fips = '{county_fips}'
+            AND metric_name = 'People_Population_Population'
+            LIMIT 1
+        """
+        
+        try:
+            result = client.query(query).to_dataframe()
+            if not result.empty:
+                return int(result.iloc[0]['population'])
+        except Exception as e:
+            print(f"Error fetching population: {e}")
+        
+        return None
     
     def get_all_counties(self):
         """Get list of all counties for dropdown"""
@@ -225,26 +247,27 @@ class BigQueryRadarChartDataProvider:
         
         if self.comparison_mode == 'state' and self.stage >= 3:
             # Use pre-calculated state percentiles (FAST!)
+            # FIXED: Start from raw_metrics to ensure we have all the metadata
             details_query = f"""
                 SELECT 
                     rm.metric_name,
                     rm.sub_metric_name,
-                    nm.raw_value as metric_value,
+                    rm.raw_value as metric_value,
                     sp.state_percentile as percentile_rank,
                     rm.unit,
                     rm.year,
                     ms.is_reverse_metric
-                FROM `{self.project_id}.{self.dataset_id}.normalized_metrics` nm
-                JOIN `{self.project_id}.{self.dataset_id}.raw_metrics` rm 
-                    ON nm.fips = rm.fips AND nm.metric_name = rm.metric_name
+                FROM `{self.project_id}.{self.dataset_id}.raw_metrics` rm
                 JOIN `{self.project_id}.{self.dataset_id}.state_percentiles` sp 
-                    ON nm.fips = sp.fips AND nm.metric_name = sp.metric_name
+                    ON rm.fips = sp.fips AND rm.metric_name = sp.metric_name
+                JOIN `{self.project_id}.{self.dataset_id}.normalized_metrics` nm
+                    ON rm.fips = nm.fips AND rm.metric_name = nm.metric_name
                 LEFT JOIN `{self.project_id}.{self.dataset_id}.metric_statistics` ms 
-                    ON nm.metric_name = ms.metric_name
-                WHERE nm.fips = '{county_fips}'
+                    ON rm.metric_name = ms.metric_name
+                WHERE rm.fips = '{county_fips}'
                 AND LOWER(rm.top_level) = LOWER('{db_top_level}')
                 AND LOWER(rm.sub_measure) = LOWER('{db_sub_category}')
-                AND nm.is_missing = 0
+                AND nm.is_missing = FALSE
                 ORDER BY sp.state_percentile DESC
             """
         else:
@@ -266,24 +289,30 @@ class BigQueryRadarChartDataProvider:
                 WHERE nm.fips = '{county_fips}'
                 AND LOWER(rm.top_level) = LOWER('{db_top_level}')
                 AND LOWER(rm.sub_measure) = LOWER('{db_sub_category}')
-                AND nm.is_missing = 0
+                AND nm.is_missing = FALSE
                 ORDER BY nm.percentile_rank DESC
             """
         
-        details_df = client.query(details_query).to_dataframe()
-        
-        # Add human-readable display names
-        if not details_df.empty:
-            display_names = []
-            for _, row in details_df.iterrows():
-                display_name = self.get_display_name(row['metric_name'])
-                if display_name == row['metric_name'] and row.get('sub_metric_name'):
-                    display_name = row['sub_metric_name'].replace('_', ' ').title()
-                display_names.append(display_name)
+        try:
+            details_df = client.query(details_query).to_dataframe()
             
-            details_df['display_name'] = display_names
-        
-        return details_df
+            # Add human-readable display names
+            if not details_df.empty:
+                display_names = []
+                for _, row in details_df.iterrows():
+                    display_name = self.get_display_name(row['metric_name'])
+                    if display_name == row['metric_name'] and row.get('sub_metric_name'):
+                        display_name = row['sub_metric_name'].replace('_', ' ').title()
+                    display_names.append(display_name)
+                
+                details_df['display_name'] = display_names
+            
+            return details_df
+            
+        except Exception as e:
+            print(f"❌ Error in get_submetric_details: {e}")
+            print(f"   Query attempted for: {county_fips}, {db_top_level}, {db_sub_category}")
+            return pd.DataFrame()
 
 
 def get_performance_label(percentile, comparison_mode='national'):
@@ -352,8 +381,8 @@ def create_enhanced_radar_chart(county_data, county_name, data_provider, county_
                     yref="paper",
                     x=0.5,
                     y=0.5,
-                    sizex=1.0,
-                    sizey=1.0,
+                    sizex=1.3,
+                    sizey=1.3,
                     xanchor="center",
                     yanchor="middle",
                     opacity=0.8,
@@ -461,7 +490,8 @@ def create_enhanced_radar_chart(county_data, county_name, data_provider, county_
                             hover_detail = f"<br><br>Top Metrics:<br>{metrics_text}"
                             if len(sample_details) > 2:
                                 hover_detail += f"<br>... and {len(sample_details)-2} more"
-                    except:
+                    except Exception as e:
+                        print(f"⚠️ Could not load hover details for {sub_cat}: {e}")
                         hover_detail = ""
                     
                     performance_label = get_performance_label(value, data_provider.comparison_mode)
@@ -520,7 +550,7 @@ def create_enhanced_radar_chart(county_data, county_name, data_provider, county_
             bgcolor='rgba(255,255,255,0)' if svg_loaded else 'white',
             radialaxis=dict(
                 visible=False,  # Hide for clean look 
-                range=[0, 200],  # Extended range to push points outward
+                range=[0, 150],  # Extended range to push points outward
                 angle=90,
                 tickfont=dict(size=12, color='#374151'),
                 gridcolor='rgba(200,200,200,0.2)',
@@ -544,8 +574,8 @@ def create_enhanced_radar_chart(county_data, county_name, data_provider, county_
             x=0.5, 
             font=dict(size=18, color='#1F2937')
         ),
-        height=700,
-        width=700,
+        height=800,
+        width=800,
         margin=dict(t=120, b=100, l=100, r=100),
         paper_bgcolor='rgba(255,255,255,0)' if svg_loaded else 'white',
         plot_bgcolor='rgba(255,255,255,0)' if svg_loaded else 'white',
@@ -618,9 +648,11 @@ def create_detail_chart(details_df, title, comparison_mode='national'):
 
 
 if __name__ == "__main__":
-    print("🚀 ENHANCED BIGQUERY RADAR CHART PROVIDER V2")
+    print("🚀 ENHANCED BIGQUERY RADAR CHART PROVIDER V2.1 - FIXED")
     print("=" * 70)
     print("✅ Module loaded successfully")
     print("📊 Ready for dashboard integration")
     print("🎨 Updated colors: Purple, Orange/Gold, Green")
+    print("✨ Population query method added")
+    print("🔧 FIXED: Drill-down detail charts now working")
     print("=" * 70)
