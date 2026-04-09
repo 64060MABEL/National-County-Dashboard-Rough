@@ -27,42 +27,29 @@ class BigQuerySustainabilityNormalizer:
         
         # Define metrics where "lower is better" (these need reversed percentiles)
         self.reverse_metrics = {
-            # Health metrics (lower is better)
-            'PEOPLE_HEALTH_LENGTHOFLIFE_PREMATUREDEATH',
-            'PEOPLE_HEALTH_QUALITYOFLIFE_FREQPHYDISTRESS', 
-            'PEOPLE_HEALTH_QUALITYOFLIFE_FREQMENDISTRESS',
-            'PEOPLE_HEALTH_QUALITYOFLIFE_ADULTWITHDIABETES',
-            'PEOPLE_HEALTH_QUALITYOFLIFE_HIVPREVRATE',
-            'PEOPLE_HEALTH_HEALTHBEHAVIOURS_ADULTSWITHOBESITY',
-            'PEOPLE_HEALTH_HEALTHBEHAVIOURS_ADULTSSMOKING',
-            'PEOPLE_HEALTH_HEALTHBEHAVIOURS_EXCESSIVEDRINKING',
-            'PEOPLE_HEALTH_HEALTHBEHAVIOURS_PHYSICALLYINACTIVE',
-            'PEOPLE_HEALTH_HEALTHBEHAVIOURS_INSUFFICIENTSLEEP',
-            'PEOPLE_HEALTH_HEALTHRESOURCES_ACCESSTOCARE_UNINSURED',
-            'PEOPLE_HEALTH_HEALTHRESOURCES_QUALITYOFCARE_PREVENTABLEHOSPITALIZATIONRATE',
-            
-            # Community metrics (lower is better)
-            'PEOPLE_COMMUNITY_SEVEREHOUSINGPROBLEMS',
-            'PEOPLE_COMMUNITY_FOODINSECURITY',
-            'PEOPLE_COMMUNITY_LONGCOMMUTEANDDRIVESALONE',
-            'PEOPLE_COMMUNITY_VIOLENTCRIMERATE',
-            
-            # Wealth metrics (lower is better)
-            'PEOPLE_WEALTH_INCOMERATIO80BY20',
-            'PEOPLE_WEALTH_CHILDPOVERTY',
-            
-            # Business/Government metrics (some lower is better)
-            'PRODUCTIVITY_GOVERNMENT_VIOLENTCRIMERATE',
-            'PRODUCTIVITY_GOVERNMENT_SEVEREHOUSINGPROBLEMS',
-            'PRODUCTIVITY_GOVERNMENT_DEPENDENCYRATIO',
-            
-            # Employment metrics (lower is better)
-            'PRODUCTIVITY_EMPLOYMENT_UNEMPLOYMENTRATE',
-            
-            # Environmental metrics (lower is better)  
-            'PLACE_CLIMATEANDRESILIENCE_CO2ORCAPITA',
+            'People_Community_LongCommuteAndDrivesAlone',
+            'People_Community_ViolentCrimeRate',
+            'People_Health_HealthBehaviours_AdultsSmoking',
+            'People_Health_HealthBehaviours_AdultsWithObesity',
+            'People_Health_HealthBehaviours_ExcessiveDrinking',
+            'People_Health_HealthBehaviours_InsufficientSleep',
+            'People_Health_HealthBehaviours_PhysicallyInactive',
+            'People_Health_HealthResources_AccessToCare_Uninsured',
+            'People_Health_HealthResources_QualityOfCare_PreventableHospitalizationRate',
+            'People_Health_LengthOfLife_Premature Death',
+            'People_Health_QualityOfLife_AdultWithDiabetes',
+            'People_Health_QualityOfLife_FreqMenDistress',
+            'People_Health_QualityOfLife_FreqPhyDistress',
+            'People_Health_QualityOfLife_HIVPrevRate',
+            'People_Wealth_ChildPoverty',
+            'People_Wealth_IncomeRatio80by20',
+            'Place_ClimateAndResilience_CO2OrCapita',
             'Place_LandAirWater_AirQualityIndexPerPm2.5',
-            'PLACE_LANDAIRWATER_WATERCONSERVATIONORGALLONSORPERSONORDAY'
+            'Prosperity_Business_RatioOfEstablishmentBirthsPerDeaths2020',
+            'Prosperity_Employment_UnemploymentRate',
+            'Prosperity_Government_DependencyRatio',
+            'Prosperity_Government_ViolentCrimeRate',
+            'Prosperity_Nonprofit_WageRatio',
         }
     
     def connect(self):
