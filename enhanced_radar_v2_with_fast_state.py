@@ -97,7 +97,7 @@ class BigQueryRadarChartDataProvider:
             table_names = [table.table_id for table in tables]
             
             # Check for fast state comparison tables
-            has_state_tables = 'state_percentiles' in table_names and 'state_aggregated_scores' in table_names
+            has_state_tables = 'county_state_percentiles' in table_names and 'state_aggregated_scores' in table_names
             
             if 'aggregated_scores' in table_names and 'normalized_metrics' in table_names:
                 if has_state_tables:
@@ -129,9 +129,8 @@ class BigQueryRadarChartDataProvider:
             print("✅ Switched to national-level comparison")
     
     def get_county_population(self, county_fips):
-        """Get population for a county"""
+        """Get population for a single county"""
         client = bigquery.Client(project=self.project_id)
-        
         query = f"""
             SELECT raw_value as population
             FROM `{self.project_id}.{self.dataset_id}.raw_metrics`
@@ -139,14 +138,115 @@ class BigQueryRadarChartDataProvider:
             AND metric_name = 'People_Population_Population'
             LIMIT 1
         """
-        
         try:
             result = client.query(query).to_dataframe()
             if not result.empty:
                 return int(result.iloc[0]['population'])
         except Exception as e:
             print(f"Error fetching population: {e}")
+        return None
+
+    def get_population_rank(self, county_fips, state_code=None):
+        """Get population and rank in ONE query"""
+        client = bigquery.Client(project=self.project_id)
         
+        if state_code:
+            query = f"""
+                WITH state_pops AS (
+                    SELECT 
+                        rm.fips,
+                        rm.raw_value as population,
+                        RANK() OVER (ORDER BY rm.raw_value DESC) as pop_rank,
+                        COUNT(*) OVER () as total_counties
+                    FROM `{self.project_id}.{self.dataset_id}.raw_metrics` rm
+                    JOIN `{self.project_id}.{self.dataset_id}.counties` c
+                    ON rm.fips = c.fips
+                    WHERE rm.metric_name = 'People_Population_Population'
+                    AND c.state = '{state_code}'
+                    AND rm.raw_value IS NOT NULL
+                )
+                SELECT population, pop_rank, total_counties
+                FROM state_pops
+                WHERE fips = '{county_fips}'
+            """
+        else:
+            query = f"""
+                WITH national_pops AS (
+                    SELECT 
+                        fips,
+                        raw_value as population,
+                        RANK() OVER (ORDER BY raw_value DESC) as pop_rank,
+                        COUNT(*) OVER () as total_counties
+                    FROM `{self.project_id}.{self.dataset_id}.raw_metrics`
+                    WHERE metric_name = 'People_Population_Population'
+                    AND raw_value IS NOT NULL
+                )
+                SELECT population, pop_rank, total_counties
+                FROM national_pops
+                WHERE fips = '{county_fips}'
+            """
+        
+        try:
+            result = client.query(query).to_dataframe()
+            if not result.empty:
+                return {
+                    'population': int(result.iloc[0]['population']),
+                    'rank': int(result.iloc[0]['pop_rank']),
+                    'total': int(result.iloc[0]['total_counties'])
+                }
+        except Exception as e:
+            print(f"Error fetching population rank: {e}")
+        return None
+    def get_population_rank(self, county_fips, state_code=None):
+        """Get population and rank in ONE query"""
+        client = bigquery.Client(project=self.project_id)
+        
+        if state_code:
+            query = f"""
+                WITH state_pops AS (
+                    SELECT 
+                        rm.fips,
+                        rm.raw_value as population,
+                        RANK() OVER (ORDER BY rm.raw_value DESC) as pop_rank,
+                        COUNT(*) OVER () as total_counties
+                    FROM `{self.project_id}.{self.dataset_id}.raw_metrics` rm
+                    JOIN `{self.project_id}.{self.dataset_id}.counties` c
+                    ON rm.fips = c.fips
+                    WHERE rm.metric_name = 'People_Population_Population'
+                    AND c.state = '{state_code}'
+                    AND rm.raw_value IS NOT NULL
+                )
+                SELECT population, pop_rank, total_counties
+                FROM state_pops
+                WHERE fips = '{county_fips}'
+            """
+        else:
+            query = f"""
+                WITH national_pops AS (
+                    SELECT 
+                        fips,
+                        raw_value as population,
+                        RANK() OVER (ORDER BY raw_value DESC) as pop_rank,
+                        COUNT(*) OVER () as total_counties
+                    FROM `{self.project_id}.{self.dataset_id}.raw_metrics`
+                    WHERE metric_name = 'People_Population_Population'
+                    AND raw_value IS NOT NULL
+                )
+                SELECT population, pop_rank, total_counties
+                FROM national_pops
+                WHERE fips = '{county_fips}'
+            """
+        
+        try:
+            result = client.query(query).to_dataframe()
+            if not result.empty:
+                return {
+                    'population': int(result.iloc[0]['population']),
+                    'rank': int(result.iloc[0]['pop_rank']),
+                    'total': int(result.iloc[0]['total_counties'])
+                }
+        except Exception as e:
+            print(f"Error fetching population rank: {e}")
         return None
     
     def get_all_counties(self):
@@ -191,29 +291,30 @@ class BigQueryRadarChartDataProvider:
         
         if county_info.empty:
             return pd.DataFrame(), {}
-        
+                
         if self.comparison_mode == 'state' and self.stage >= 3:
-            # Use pre-calculated state percentiles (FAST!)
             submeasures_query = f"""
                 SELECT 
-                    parent_measure as top_level,
-                    measure_name,
+                    rm.top_level as top_level,
+                    CONCAT(rm.top_level, '_', rm.sub_measure) as measure_name,
                     CASE 
-                        WHEN parent_measure = 'People' THEN REPLACE(measure_name, 'People_', '')
-                        WHEN parent_measure = 'Prosperity' THEN REPLACE(measure_name, 'Prosperity_', '')
-                        WHEN parent_measure = 'Place' THEN REPLACE(measure_name, 'Place_', '')
+                        WHEN rm.top_level = 'People' THEN rm.sub_measure
+                        WHEN rm.top_level = 'Prosperity' THEN rm.sub_measure
+                        WHEN rm.top_level = 'Place' THEN rm.sub_measure
                     END as sub_measure,
-                    state_percentile_rank as percentile_rank,
-                    normalized_score,
-                    component_count,
-                    completeness_ratio
-                FROM `{self.project_id}.{self.dataset_id}.state_aggregated_scores`
-                WHERE fips = '{county_fips}'
-                AND measure_level = 'sub_measure'
-                AND state_percentile_rank IS NOT NULL
-                AND measure_name NOT LIKE '%Population%'
-                ORDER BY parent_measure, measure_name
-            """
+                    AVG(sp.percentile_rank) as percentile_rank,
+                    AVG(sp.percentile_rank) as normalized_score,
+                    COUNT(*) as component_count,
+                    1.0 as completeness_ratio
+                FROM `{self.project_id}.{self.dataset_id}.county_state_percentiles` sp
+                JOIN `{self.project_id}.{self.dataset_id}.raw_metrics` rm
+                ON sp.fips = rm.fips AND sp.metric_name = rm.metric_name
+                WHERE sp.fips = '{county_fips}'
+                AND rm.top_level IN ('People', 'Prosperity', 'Place')
+                AND CONCAT(rm.top_level, '_', rm.sub_measure) != 'People_Population'
+                GROUP BY rm.top_level, rm.sub_measure
+                ORDER BY rm.top_level, rm.sub_measure
+                """
             
         else:
             # Use national percentiles
@@ -297,12 +398,12 @@ class BigQueryRadarChartDataProvider:
                     rm.metric_name,
                     rm.sub_metric_name,
                     rm.raw_value as metric_value,
-                    sp.state_percentile as percentile_rank,
+                    sp.percentile_rank as percentile_rank,
                     rm.unit,
                     rm.year,
                     ms.is_reverse_metric
                 FROM `{self.project_id}.{self.dataset_id}.raw_metrics` rm
-                JOIN `{self.project_id}.{self.dataset_id}.state_percentiles` sp 
+                JOIN `{self.project_id}.{self.dataset_id}.county_state_percentiles` sp 
                     ON rm.fips = sp.fips AND rm.metric_name = sp.metric_name
                 JOIN `{self.project_id}.{self.dataset_id}.normalized_metrics` nm
                     ON rm.fips = nm.fips AND rm.metric_name = nm.metric_name
@@ -312,7 +413,7 @@ class BigQueryRadarChartDataProvider:
                 AND LOWER(rm.top_level) = LOWER('{db_top_level}')
                 AND LOWER(rm.sub_measure) = LOWER('{db_sub_category}')
                 AND nm.is_missing = FALSE
-                ORDER BY sp.state_percentile DESC
+                ORDER BY sp.percentile_rank DESC
             """
         else:
             # Use national percentiles
@@ -593,26 +694,28 @@ def create_enhanced_radar_chart(county_data, county_name, data_provider, county_
     if data_provider.comparison_mode == 'state':
         speed_indicator = " ⚡" if data_provider.stage >= 3 else " ⏳"
     
-    svg_indicator = " 🎨" if svg_loaded else ""
-    main_title = f"<b>{county_name} Sustainability Dashboard</b><br><sub>Percentile Rankings vs. {comparison_context}{speed_indicator}{svg_indicator} • Click sub-measures for details</sub>"
-    
+    # Title removed - now handled by dashboard header
+
     fig.update_layout(
         polar=dict(
             bgcolor='rgba(255,255,255,0)' if svg_loaded else 'white',
             radialaxis=dict(
-                visible=False,  # Hide for clean look 
+                visible=True,  # Keep axis visible for grid lines
                 range=[0, 150],  # Extended range to push points outward
                 angle=90,
-                tickfont=dict(size=12, color='#374151'),
+                showticklabels=False,  # Hide the tick labels (90, 75, etc.)
+                tickfont=dict(size=1, color='rgba(0,0,0,0)'),  # Transparent and tiny
                 gridcolor='rgba(200,200,200,0.2)',
-                tickmode='array',
-                tickvals=[0, 10, 25, 50, 75, 100],
-                ticktext=['0', '10', '25', '50', '75', '100']
+                tickmode='linear',
+                tick0=0,
+                dtick=25,
+                showline=False,  # Hide the radial axis line
+                ticks=''  # Remove tick marks
             ),
             angularaxis=dict(
                 tickmode='array',
-                tickvals=[0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330],
-                ticktext=[''] * 12,
+                tickvals=all_theta,  # Use actual data angles for precise alignment
+                ticktext=[''] * len(all_theta),
                 gridcolor='rgba(200,200,200,0.2)',
                 showticklabels=False,
                 rotation=0,
@@ -620,44 +723,28 @@ def create_enhanced_radar_chart(county_data, county_name, data_provider, county_
             )
         ),
         showlegend=False,
-        title=dict(
-            text=main_title,
-            x=0.5, 
-            font=dict(size=18, color='#1F2937')
-        ),
         height=800,
-        width=800,
-        margin=dict(t=120, b=100, l=100, r=100),
+        margin=dict(t=20, b=20, l=20, r=20),  # Minimal margins since header is external
         paper_bgcolor='rgba(255,255,255,0)' if svg_loaded else 'white',
         plot_bgcolor='rgba(255,255,255,0)' if svg_loaded else 'white',
-        autosize=False
+        autosize=True  # Allow responsive sizing
     )
     
     return fig
 
 
 def create_detail_chart(details_df, title, comparison_mode='national'):
-    """Create enhanced detail chart with REVERSE METRIC HANDLING"""
+    """Create enhanced detail chart - percentiles already reversed by data provider"""
     import plotly.graph_objects as go
-    
+
     if details_df.empty:
         return go.Figure()
-    
-    # ✅ APPLY REVERSE LOGIC BEFORE creating chart
-    display_percentiles = []
-    for _, row in details_df.iterrows():
-        percentile = row['percentile_rank']
-        is_reverse = row.get('is_reverse_metric', False)
-        
-        if is_reverse:
-            # REVERSE IT! Lower percentile = Better performance
-            display_percentile = 100 - percentile
-        else:
-            display_percentile = percentile
-        
-        display_percentiles.append(display_percentile)
-    
-    details_df['display_percentile'] = display_percentiles
+
+    # NOTE: The data provider (both BigQuery and Local) already applies
+    # the reversal logic (100 - percentile) for reverse metrics.
+    # DO NOT reverse again here or it will double-reverse!
+    # Just use the percentile_rank as-is.
+    details_df['display_percentile'] = details_df['percentile_rank']
     
     # Add comparison context to title
     comparison_label = "National" if comparison_mode == 'national' else "State"
