@@ -499,6 +499,76 @@ class BigQuerySustainabilityNormalizer:
         
         print(f"   ✅ Aggregated {count} top-level measure scores")
         return count
+    
+    def rebuild_state_percentiles(self):
+        """Rebuild state-level percentiles using pandas rank method"""
+        print("📊 Rebuilding state percentiles...")
+
+        reverse_metrics = {
+            'People_Community_LongCommuteAndDrivesAlone',
+            'People_Community_ViolentCrimeRate',
+            'People_Health_HealthBehaviours_AdultsSmoking',
+            'People_Health_HealthBehaviours_AdultsWithObesity',
+            'People_Health_HealthBehaviours_ExcessiveDrinking',
+            'People_Health_HealthBehaviours_InsufficientSleep',
+            'People_Health_HealthBehaviours_PhysicallyInactive',
+            'People_Health_HealthResources_AccessToCare_Uninsured',
+            'People_Health_HealthResources_QualityOfCare_PreventableHospitalizationRate',
+            'People_Health_LengthOfLife_Premature Death',
+            'People_Health_QualityOfLife_AdultWithDiabetes',
+            'People_Health_QualityOfLife_FreqMenDistress',
+            'People_Health_QualityOfLife_FreqPhyDistress',
+            'People_Health_QualityOfLife_HIVPrevRate',
+            'People_Wealth_ChildPoverty',
+            'People_Wealth_IncomeRatio80by20',
+            'Place_ClimateAndResilience_CO2OrCapita',
+            'Place_LandAirWater_AirQualityIndexPerPm2.5',
+            'Prosperity_Business_RatioOfEstablishmentBirthsPerDeaths2020',
+            'Prosperity_Employment_UnemploymentRate',
+            'Prosperity_Government_DependencyRatio',
+            'Prosperity_Government_ViolentCrimeRate',
+            'Prosperity_Nonprofit_WageRatio',
+        }
+
+        print("   📥 Loading raw values from BigQuery...")
+        raw_df = self.client.query(f"""
+            SELECT nm.fips, c.state, nm.metric_name, nm.raw_value
+            FROM `{self.project_id}.{self.dataset_id}.normalized_metrics` nm
+            JOIN `{self.project_id}.{self.dataset_id}.counties` c ON nm.fips = c.fips
+            WHERE nm.is_missing = FALSE AND nm.raw_value IS NOT NULL
+        """).to_dataframe()
+
+        print(f"   Loaded {len(raw_df):,} rows covering {raw_df['state'].nunique()} states")
+
+        print("   Computing state percentiles using pandas rank(pct=True)...")
+        records = []
+
+        for (state, metric), group in raw_df.groupby(['state', 'metric_name']):
+            raw_pct = group['raw_value'].rank(pct=True) * 100
+
+            if metric in reverse_metrics:
+                raw_pct = 100 - raw_pct
+
+            for idx, row in group.iterrows():
+                records.append({
+                    'fips':            row['fips'],
+                    'state':           state,
+                    'metric_name':     metric,
+                    'raw_value':       row['raw_value'],
+                    'percentile_rank': float(raw_pct.loc[idx])
+                })
+
+        result_df = pd.DataFrame(records)
+        print(f"   Computed {len(result_df):,} state percentile rows")
+
+        print("   💾 Writing to BigQuery...")
+        table_id = f"{self.project_id}.{self.dataset_id}.county_state_percentiles"
+        job_config = bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
+        job = self.client.load_table_from_dataframe(result_df, table_id, job_config=job_config)
+        job.result()
+
+        print(f"   ✅ State percentiles rebuilt ({len(result_df):,} rows)")
+        return len(result_df)   
     def generate_normalization_summary(self):
         """Generate summary of normalization results from BigQuery"""
         print("\n📋 NORMALIZATION SUMMARY:")
@@ -605,7 +675,11 @@ class BigQuerySustainabilityNormalizer:
             # Step 6: Aggregate sub-measures into top-level measures
             toplevel_aggregated = self.aggregate_top_level_measures()
             
-            # Step 7: Generate summary
+
+            # Step 7: Rebuild state percentiles
+            state_percentile_rows = self.rebuild_state_percentiles()
+
+            # Step 8: Generate summary
             self.generate_normalization_summary()
             
             print(f"\n✅ STAGE 2 COMPLETED SUCCESSFULLY!")
@@ -617,6 +691,7 @@ class BigQuerySustainabilityNormalizer:
             print(f"   Metric groups: {groups_aggregated}")
             print(f"   Sub-measures: {submeasures_aggregated}")
             print(f"   Top-level measures: {toplevel_aggregated}")
+            print(f"   State percentile rows: {state_percentile_rows:,}")
             
         except Exception as e:
             print(f"❌ ERROR in Stage 2: {str(e)}")
